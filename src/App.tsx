@@ -21,6 +21,11 @@ import { SAMPLE_BOOKS, SampleBook } from './utils/sampleBooks.ts';
 import { chunkBookText } from './utils/chunker.ts';
 import { DEFAULT_GLOSSARIES } from './constants/tones.ts';
 import { DEFAULT_PROVIDERS } from './constants/providers.ts';
+import {
+  getConnectionMode,
+  resolveApiUrl,
+  translateDirectFromClient,
+} from './utils/aiClient.ts';
 
 const STORAGE_KEY_BOOKS = 'persian_book_translator_books_library_v3';
 const STORAGE_KEY_ACTIVE_BOOK = 'persian_book_translator_active_id_v3';
@@ -207,7 +212,7 @@ export default function App() {
   // Fetch server status on mount
   const fetchServerStatus = async () => {
     try {
-      const res = await fetch('/api/status');
+      const res = await fetch(resolveApiUrl('/api/status'));
       if (res.ok) {
         const data = await res.json();
         setServerStatus(data);
@@ -316,45 +321,90 @@ export default function App() {
     );
 
     try {
-      const chunkIdx = project.chunks.findIndex(c => c.id === chunkId);
-      const prevChunks = project.chunks.slice(0, chunkIdx).filter(c => c.translatedHtml);
-      const previousSummary =
-        prevChunks.length > 0
-          ? `خلاصه بخش‌های گذشته: نویسنده در بخش‌های قبلی موضوعات آغازین را شرح داد.`
-          : undefined;
+      const mode = getConnectionMode();
+      let translationResult: {
+        translatedHtml: string;
+        serverUsed?: string;
+        modelUsed?: string;
+        keyUsed?: string;
+        providerUsed?: string;
+        switchOccurred?: boolean;
+      } | null = null;
 
-      const chosenModel = activeProvider.selectedModel || project.model || 'gemini-3.8-flash';
+      // Try Backend Server First (if mode is 'auto' or 'server')
+      if (mode !== 'direct') {
+        try {
+          const chunkIdx = project.chunks.findIndex(c => c.id === chunkId);
+          const prevChunks = project.chunks.slice(0, chunkIdx).filter(c => c.translatedHtml);
+          const previousSummary =
+            prevChunks.length > 0
+              ? `خلاصه بخش‌های گذشته: نویسنده در بخش‌های قبلی موضوعات آغازین را شرح داد.`
+              : undefined;
 
-      const res = await fetch('/api/translate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chunkId,
+          const chosenModel = activeProvider.selectedModel || project.model || 'gemini-3.8-flash';
+          const apiUrl = resolveApiUrl('/api/translate');
+
+          const res = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chunkId,
+              englishText: chunk.englishText,
+              chapterTitle: chunk.chapterTitle,
+              tone: project.tone,
+              model: chosenModel,
+              serverPool: serverPool,
+              glossary: project.glossary,
+              previousSummary,
+            }),
+          });
+
+          const rawText = await res.text();
+          const trimmed = rawText.trim();
+          const isHtml = trimmed.startsWith('<') || trimmed.toLowerCase().includes('<!doctype') || trimmed.toLowerCase().includes('<html');
+
+          if (!isHtml) {
+            const data = JSON.parse(rawText);
+            if (res.ok && data?.success) {
+              translationResult = {
+                translatedHtml: data.translatedHtml,
+                keyUsed: data.keyUsed,
+                modelUsed: data.model,
+                providerUsed: data.provider || activeProvider.name,
+                serverUsed: data.serverUsed,
+                switchOccurred: data.switchOccurred,
+              };
+            } else if (mode === 'server') {
+              throw new Error(data?.error || `خطای سرور ترجمه (کد ${res.status})`);
+            }
+          } else if (mode === 'server') {
+            throw new Error(`سرور بک‌اند به جای خروجی JSON، یک صفحه وب HTML با کد وضعیت ${res.status} برگرداند.`);
+          }
+        } catch (serverErr: any) {
+          if (mode === 'server') {
+            throw serverErr;
+          }
+          console.warn('Backend translation failed or offline in build, falling back to direct client translation...', serverErr);
+        }
+      }
+
+      // If translationResult is still null (direct mode OR auto fallback), execute direct from browser!
+      if (!translationResult) {
+        const direct = await translateDirectFromClient({
           englishText: chunk.englishText,
           chapterTitle: chunk.chapterTitle,
           tone: project.tone,
-          model: chosenModel,
-          serverPool: serverPool,
           glossary: project.glossary,
-          previousSummary,
-        }),
-      });
+          serverPool: serverPool,
+        });
 
-      let data: any = null;
-      let rawText = '';
-      try {
-        rawText = await res.text();
-        data = JSON.parse(rawText);
-      } catch {
-        const trimmed = rawText.trim();
-        if (trimmed.startsWith('<') || trimmed.toLowerCase().includes('<!doctype') || trimmed.toLowerCase().includes('<html')) {
-          throw new Error(`سرور بک‌اند به جای خروجی JSON، یک صفحه وب HTML با کد وضعیت ${res.status} برگرداند. لطفاً اطمینان حاصل فرمایید سرویس Node.js روی سرور در حال اجراست و مسیر /api مسدود نشده است.`);
-        }
-        throw new Error(`پاسخ نامعتبر از سرور (کد ${res.status}): ${rawText.slice(0, 150)}`);
-      }
-
-      if (!res.ok || !data?.success) {
-        throw new Error(data?.error || `خطای سرور ترجمه (کد ${res.status})`);
+        translationResult = {
+          translatedHtml: direct.translatedHtml,
+          serverUsed: direct.serverUsed,
+          modelUsed: direct.modelUsed,
+          providerUsed: 'کلاینت مستقیم (مرورگر)',
+          switchOccurred: direct.switchOccurred,
+        };
       }
 
       setBooks(prev =>
@@ -367,12 +417,12 @@ export default function App() {
                 ? {
                     ...c,
                     status: 'completed',
-                    translatedHtml: data.translatedHtml,
-                    keyUsed: data.keyUsed,
-                    modelUsed: data.model,
-                    providerUsed: data.provider || activeProvider.name,
-                    serverUsed: data.serverUsed,
-                    switchOccurred: data.switchOccurred,
+                    translatedHtml: translationResult!.translatedHtml,
+                    keyUsed: translationResult!.keyUsed,
+                    modelUsed: translationResult!.modelUsed,
+                    providerUsed: translationResult!.providerUsed,
+                    serverUsed: translationResult!.serverUsed,
+                    switchOccurred: translationResult!.switchOccurred,
                     translatedAt: Date.now(),
                   }
                 : c

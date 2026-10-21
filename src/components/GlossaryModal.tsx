@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { GlossaryItem, BookProject } from '../types.ts';
 import { DEFAULT_GLOSSARIES } from '../constants/tones.ts';
+import { resolveApiUrl } from '../utils/aiClient.ts';
 
 interface GlossaryModalProps {
   isOpen: boolean;
@@ -80,7 +81,7 @@ export const GlossaryModal: React.FC<GlossaryModalProps> = ({
         .join('\n\n')
         .slice(0, 3500);
 
-      const res = await fetch('/api/extract-glossary', {
+      const res = await fetch(resolveApiUrl('/api/extract-glossary'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

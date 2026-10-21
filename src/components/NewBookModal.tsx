@@ -18,6 +18,7 @@ import {
 import { BookProject, ToneId, BookChunk } from '../types.ts';
 import { TONE_DEFINITIONS, DEFAULT_GLOSSARIES } from '../constants/tones.ts';
 import { chunkBookText } from '../utils/chunker.ts';
+import { resolveApiUrl } from '../utils/aiClient.ts';
 
 interface NewBookModalProps {
   isOpen: boolean;
@@ -108,7 +109,7 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
           const dataUrl = event.target?.result as string;
           const base64Data = dataUrl.split(',')[1];
 
-          const res = await fetch('/api/import/file', {
+          const res = await fetch(resolveApiUrl('/api/import/file'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

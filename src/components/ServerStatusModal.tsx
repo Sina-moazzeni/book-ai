@@ -17,6 +17,7 @@ import {
   Activity
 } from 'lucide-react';
 import { ServerStatusResponse } from '../types.ts';
+import { resolveApiUrl } from '../utils/aiClient.ts';
 
 interface ServerStatusModalProps {
   isOpen: boolean;
@@ -47,7 +48,7 @@ export const ServerStatusModal: React.FC<ServerStatusModalProps> = ({
   const handleTestKey = async (masked: string) => {
     setTestingMasked(masked);
     try {
-      const res = await fetch('/api/keys/test', {
+      const res = await fetch(resolveApiUrl('/api/keys/test'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ masked, model: selectedModel }),
@@ -60,7 +61,7 @@ export const ServerStatusModal: React.FC<ServerStatusModalProps> = ({
         const isHtml = rawText.trim().startsWith('<') || rawText.toLowerCase().includes('<!doctype');
         throw new Error(
           isHtml
-            ? `پاسخ وب HTML از سرور دریافت شد (کد ${res.status}). لطفاً آدرس و تنظیمات سرور را بررسی فرمایید.`
+            ? `پاسخ وب HTML از سرور دریافت شد (کد ${res.status}). لطفاً مطمئن شوید سرویس Node.js روشن است یا در بخش سرورها حالت «مستقیم مرورگر» را برگزینید.`
             : `پاسخ سرور قالب معتبر نداشت (کد ${res.status}).`
         );
       }
@@ -96,7 +97,7 @@ export const ServerStatusModal: React.FC<ServerStatusModalProps> = ({
     setIsAddingKey(true);
     setAddMessage(null);
     try {
-      const res = await fetch('/api/keys/add', {
+      const res = await fetch(resolveApiUrl('/api/keys/add'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ key: newKey.trim(), label: newKeyLabel.trim() }),
@@ -121,7 +122,7 @@ export const ServerStatusModal: React.FC<ServerStatusModalProps> = ({
   const handleDeleteKey = async (masked: string) => {
     if (!confirm(`آیا مایلید کلید ${masked} از استخر حذف شود؟`)) return;
     try {
-      const res = await fetch(`/api/keys/${encodeURIComponent(masked)}`, {
+      const res = await fetch(resolveApiUrl(`/api/keys/${encodeURIComponent(masked)}`), {
         method: 'DELETE',
       });
       if (!res.ok) {

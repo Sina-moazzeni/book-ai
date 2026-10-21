@@ -1,5 +1,6 @@
 import { BookProject } from '../types.ts';
 import { BOOK_THEMES } from '../constants/themes.ts';
+import { resolveApiUrl } from './aiClient.ts';
 
 export async function downloadDocx(project: BookProject): Promise<boolean> {
   try {
@@ -15,7 +16,7 @@ export async function downloadDocx(project: BookProject): Promise<boolean> {
       return false;
     }
 
-    const res = await fetch('/api/export/docx', {
+    const res = await fetch(resolveApiUrl('/api/export/docx'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

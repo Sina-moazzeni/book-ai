@@ -25,6 +25,14 @@ import {
   EyeOff
 } from 'lucide-react';
 import { APIServerEndpoint, ProviderType } from '../types.ts';
+import {
+  testServerConnection,
+  getConnectionMode,
+  setConnectionMode,
+  getCustomBackendUrl,
+  setCustomBackendUrl,
+  ConnectionMode,
+} from '../utils/aiClient.ts';
 
 interface ProviderManagerModalProps {
   isOpen: boolean;
@@ -40,6 +48,8 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
   onUpdateServerPool,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [connectionMode, setConnMode] = useState<ConnectionMode>(() => getConnectionMode());
+  const [customBackendUrl, setCustBackendUrl] = useState<string>(() => getCustomBackendUrl());
   
   // New server form state
   const [newServerName, setNewServerName] = useState('');
@@ -63,7 +73,7 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
   
   // Testing states
   const [testingId, setTestingId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<Record<string, { success: boolean; latencyMs?: number; error?: string }>>({});
+  const [testResults, setTestResults] = useState<Record<string, { success: boolean; latencyMs?: number; error?: string; isDirectClient?: boolean }>>({});
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -180,66 +190,22 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
   const handleTestServer = async (server: { providerType: ProviderType; apiKey: string; baseURL: string; model: string }, id: string) => {
     setTestingId(id);
     try {
-      let isSuccess = false;
-      let latencyMs = 0;
-      let errorMsg: string | undefined = undefined;
-
-      // Clean base url
-      let effectiveBaseUrl = (server.baseURL || '').trim();
-      if (!effectiveBaseUrl) {
-        if (server.providerType === 'openrouter') effectiveBaseUrl = 'https://openrouter.ai/api/v1';
-        else if (server.providerType === 'deepseek') effectiveBaseUrl = 'https://api.deepseek.com/v1';
-        else if (server.providerType === 'openai') effectiveBaseUrl = 'https://api.openai.com/v1';
-      }
-
-      // Ping and test API key strictly through the backend server (Node.js proxy)
-      // This guarantees all requests originate from the server IP, so users can connect from any location/device without VPN.
-      try {
-        const res = await fetch('/api/keys/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            provider: server.providerType,
-            apiKey: server.apiKey,
-            baseURL: effectiveBaseUrl,
-            model: server.model,
-          }),
-        });
-
-        const rawText = await res.text();
-        const trimmed = rawText.trim();
-        if (trimmed.startsWith('<') || trimmed.toLowerCase().includes('<!doctype') || trimmed.toLowerCase().includes('<html')) {
-          isSuccess = false;
-          errorMsg = `پاسخ وب HTML از سرور دریافت شد (کد ${res.status}). لطفاً مطمئن شوید سرویس Node.js روی سرور فعال است و مسیر /api توسط IIS مسدود نشده است.`;
-        } else {
-          try {
-            const data = JSON.parse(rawText);
-            isSuccess = res.ok && Boolean(data?.success);
-            latencyMs = data?.latencyMs || 0;
-            errorMsg = data?.error;
-          } catch {
-            isSuccess = false;
-            errorMsg = `پاسخ نامعتبر از سرور: ${trimmed.slice(0, 150)}`;
-          }
-        }
-      } catch (networkErr: any) {
-        isSuccess = false;
-        errorMsg = networkErr?.message || 'عدم دسترسی به سرور بک‌اند برنامه. لطفاً وضعیت سرویس Node.js را بررسی نمایید.';
-      }
+      const result = await testServerConnection(server, connectionMode);
 
       setTestResults(prev => ({
         ...prev,
         [id]: {
-          success: isSuccess,
-          latencyMs,
-          error: errorMsg,
+          success: result.success,
+          latencyMs: result.latencyMs,
+          error: result.error,
+          isDirectClient: result.isDirectClient,
         },
       }));
 
       // Update in server pool if it exists
-      if (serverPool.some(s => s.id === id) && isSuccess) {
+      if (serverPool.some(s => s.id === id) && result.success) {
         onUpdateServerPool(
-          serverPool.map(s => (s.id === id ? { ...s, lastLatencyMs: latencyMs, lastTestedAt: Date.now() } : s))
+          serverPool.map(s => (s.id === id ? { ...s, lastLatencyMs: result.latencyMs, lastTestedAt: Date.now() } : s))
         );
       }
     } catch (err: any) {
@@ -363,16 +329,107 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
             </div>
           </div>
 
-          {/* Server-Side Proxy / IP Independence Guarantee */}
-          <div className="bg-blue-500/10 border border-blue-500/25 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-blue-300">
-            <Globe className="w-5 h-5 shrink-0 text-blue-400 mt-0.5" />
-            <div className="space-y-0.5">
-              <strong className="block font-bold text-blue-200">
-                ارتباط ۱۰۰٪ از طریق سرور اختصاصی برنامه (بدون وابستگی به IP کاربر):
-              </strong>
-              <p className="text-[11px] text-blue-300/90 leading-relaxed">
-                کلیه تست‌های پینگ، اعتبارسنجی کلیدها و ترجمه‌ها منحصراً توسط بک‌اند سرور برنامه اجرا می‌شوند (نه از مرورگر کاربر). بنابراین کاربران فارغ از لوکیشن یا محدودیت‌های IP و بدون نیاز به روشن بودن VPN روی دستگاه خود، می‌توانند به آسانی از سیستم استفاده کنند.
-              </p>
+          {/* Connection Mode & Production Build Settings */}
+          <div className="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 text-xs space-y-3 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-white font-bold">
+                <Globe className="w-4 h-4 text-indigo-400" />
+                <span>حالت اتصال در محیط توسعه، بیلد و سرور (Connection Mode):</span>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-700 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConnMode('auto');
+                    setConnectionMode('auto');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                    connectionMode === 'auto' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="پیشنهادی: اولویت با سرور برنامه؛ در صورت اجرای بیلد استاتیک یا IIS، سوئیچ خودکار به کلاینت انجام می‌شود"
+                >
+                  هوشمند خودکار (پیشنهادی)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConnMode('direct');
+                    setConnectionMode('direct');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                    connectionMode === 'direct' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="اتصال مستقیم مرورگر به OpenRouter/DeepSeek/Gemini بدون نیاز به اجرای سرویس Node.js"
+                >
+                  مستقیم مرورگر (ویژه خروجی بیلد)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConnMode('server');
+                    setConnectionMode('server');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${
+                    connectionMode === 'server' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                  title="ارسال کلیه درخواست‌ها از طریق پروکسی بک‌اند سرور برنامه"
+                >
+                  فقط سرور بک‌اند
+                </button>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-300/90 leading-relaxed">
+              {connectionMode === 'auto' && (
+                <>
+                  <strong className="text-emerald-400 font-semibold">حالت هوشمند فعال است: </strong>
+                  سامانه ابتدا از سرور بک‌اند درخواست‌ها را ارسال می‌کند. چنانچه پروژه بیلد شده باشد و هاست شما فاقد Node.js یا Reverse-Proxy باشد، درخواست‌ها بدون بروز خطای ۴۰۴ مستقیماً و خودکار از طریق مرورگر به هوش مصنوعی متصل می‌شوند.
+                </>
+              )}
+              {connectionMode === 'direct' && (
+                <>
+                  <strong className="text-blue-400 font-semibold">حالت مستقیم مرورگر فعال است: </strong>
+                  در این حالت هیچ نیازی به اجرای بک‌اند Node.js وجود ندارد و می‌توانید خروجی بیلد (<span className="font-mono text-indigo-300">dist</span>) را به آسانی روی هر هاست استاتیک، IIS، گیت‌هاب، ورسل یا هاست اشتراکی میزبانی نمایید.
+                </>
+              )}
+              {connectionMode === 'server' && (
+                <>
+                  <strong className="text-amber-400 font-semibold">حالت پروکسی سرور فعال است: </strong>
+                  کلیه درخواست‌ها منحصراً از IP سرور Node.js شما عبور می‌کنند. لطفاً مطمئن شوید سرویس بک‌اند روی سرور روشن بوده و مسیر <span className="font-mono text-amber-300">/api</span> در وب‌سرور هدایت شده است.
+                </>
+              )}
+            </p>
+
+            {/* Custom Backend URL Toggle */}
+            <div className="pt-2 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-slate-400">
+                اگر فرانت‌اند و بک‌اند شما روی دو آدرس مجزا هستند (مثلاً فرانت روی IIS و بک‌اند روی پورت ۳۰۰۰):
+              </span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  dir="ltr"
+                  value={customBackendUrl}
+                  onChange={e => {
+                    setCustBackendUrl(e.target.value);
+                    setCustomBackendUrl(e.target.value);
+                  }}
+                  placeholder="http://localhost:3000 (اختیاری)"
+                  className="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-white font-mono text-[11px] focus:outline-none focus:border-indigo-500 w-52 placeholder-slate-600"
+                />
+                {customBackendUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustBackendUrl('');
+                      setCustomBackendUrl('');
+                    }}
+                    className="text-[10px] text-slate-400 hover:text-white"
+                  >
+                    پاکسازی
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -574,7 +631,7 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
                           {testResult ? (
                             testResult.success ? (
                               <span className="text-[11px] text-emerald-400 font-bold font-mono">
-                                ✓ اتصال برقرار ({testResult.latencyMs}ms)
+                                ✓ اتصال برقرار ({testResult.latencyMs}ms{testResult.isDirectClient ? ' - مستقیم مرورگر' : ' - سرور'})
                               </span>
                             ) : (
                               <span className="text-[10px] text-red-400 truncate max-w-xs block" title={testResult.error}>
