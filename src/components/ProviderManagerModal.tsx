@@ -22,7 +22,10 @@ import {
   Sliders,
   Edit3,
   Eye,
-  EyeOff
+  EyeOff,
+  Terminal,
+  Copy,
+  Check
 } from 'lucide-react';
 import { APIServerEndpoint, ProviderType } from '../types.ts';
 import {
@@ -48,6 +51,8 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
   onUpdateServerPool,
 }) => {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showUbuntuGuide, setShowUbuntuGuide] = useState(false);
+  const [copiedNginx, setCopiedNginx] = useState(false);
   const [connectionMode, setConnMode] = useState<ConnectionMode>(() => getConnectionMode());
   const [customBackendUrl, setCustBackendUrl] = useState<string>(() => getCustomBackendUrl());
   
@@ -403,7 +408,7 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
             {/* Custom Backend URL Toggle */}
             <div className="pt-2 border-t border-slate-700/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span className="text-slate-400">
-                اگر فرانت‌اند و بک‌اند شما روی دو آدرس مجزا هستند (مثلاً فرانت روی IIS و بک‌اند روی پورت ۳۰۰۰):
+                اگر فرانت‌اند و بک‌اند شما روی دو آدرس مجزا هستند (مثلاً فرانت روی Nginx و بک‌اند Node روی پورت ۳۰۰۰):
               </span>
               <div className="flex items-center gap-2">
                 <input
@@ -430,6 +435,55 @@ export const ProviderManagerModal: React.FC<ProviderManagerModalProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Ubuntu Linux Nginx Reverse Proxy Helper */}
+            <div className="pt-2 border-t border-slate-700/60 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setShowUbuntuGuide(!showUbuntuGuide)}
+                  className="text-[11px] text-amber-300 hover:text-amber-200 font-semibold flex items-center gap-1.5 transition"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{showUbuntuGuide ? 'بستن راهنمای Nginx اوبونتو' : 'راهنمای تنظیم Nginx در سرور لینوکس اوبونتو (رفع خطای HTML 200)'}</span>
+                </button>
+                {showUbuntuGuide && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nginxSnippet = `location /api/ {\n    proxy_pass http://127.0.0.1:3000/api/;\n    proxy_http_version 1.1;\n    proxy_set_header Host $host;\n    proxy_set_header X-Real-IP $remote_addr;\n    proxy_read_timeout 120s;\n}`;
+                      navigator.clipboard.writeText(nginxSnippet);
+                      setCopiedNginx(true);
+                      setTimeout(() => setCopiedNginx(false), 2500);
+                    }}
+                    className="text-[10px] bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 px-2 py-1 rounded flex items-center gap-1 transition"
+                  >
+                    {copiedNginx ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedNginx ? 'کپی شد!' : 'کپی بلوک Nginx'}</span>
+                  </button>
+                )}
+              </div>
+
+              {showUbuntuGuide && (
+                <div className="bg-slate-950 p-3 rounded-xl border border-amber-500/30 text-[11px] space-y-2">
+                  <p className="text-slate-300 leading-relaxed">
+                    در سرور اوبونتو، اگر Nginx درخواست‌های <span className="font-mono text-amber-300">/api/</span> را به سرور Node.js فوروارد نکند، فایل <span className="font-mono text-indigo-300">index.html</span> فرانت با کد ۲۰۰ برگردانده می‌شود. برای حل، قطعه‌کد زیر را داخل بلوک <span className="font-mono text-purple-300">server</span> در فایل سایت در <span className="font-mono text-slate-400">/etc/nginx/sites-available/</span> قرار دهید:
+                  </p>
+                  <pre className="bg-black/80 text-emerald-300 font-mono text-[10px] p-2.5 rounded-lg overflow-x-auto text-left" dir="ltr">
+{`location /api/ {
+    proxy_pass http://127.0.0.1:3000/api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_read_timeout 120s;
+}`}
+                  </pre>
+                  <div className="text-[10px] text-slate-400">
+                    💡 <strong>یا به سادگی:</strong> در بالای همین کادر، حالت اتصال را روی <strong>«مستقیم مرورگر»</strong> قرار دهید تا بدون نیاز به تغییر در Nginx یا اجرای Node.js، ترجمه مستقیماً کار کند.
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

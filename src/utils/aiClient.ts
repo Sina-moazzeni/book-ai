@@ -4,6 +4,37 @@ export type ConnectionMode = 'auto' | 'direct' | 'server';
 
 export const STORAGE_CONNECTION_MODE = 'persian_book_translator_connection_mode_v1';
 export const STORAGE_CUSTOM_BACKEND_URL = 'persian_book_translator_custom_backend_url_v1';
+export const STORAGE_CLIENT_KEYS = 'persian_book_translator_client_keys_v1';
+
+export function getClientGeminiKeys(): string[] {
+  try {
+    const saved = localStorage.getItem(STORAGE_CLIENT_KEYS);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed.filter((k: any) => typeof k === 'string' && k.trim().length > 8);
+    }
+  } catch (e) {}
+  return [];
+}
+
+export function addClientGeminiKey(key: string): void {
+  try {
+    const keys = getClientGeminiKeys();
+    const clean = key.trim();
+    if (clean && !keys.includes(clean)) {
+      keys.push(clean);
+      localStorage.setItem(STORAGE_CLIENT_KEYS, JSON.stringify(keys));
+    }
+  } catch (e) {}
+}
+
+export function removeClientGeminiKey(masked: string): void {
+  try {
+    const keys = getClientGeminiKeys();
+    const filtered = keys.filter(k => `${k.slice(0, 4)}...${k.slice(-4)}` !== masked);
+    localStorage.setItem(STORAGE_CLIENT_KEYS, JSON.stringify(filtered));
+  } catch (e) {}
+}
 
 export function getConnectionMode(): ConnectionMode {
   try {
@@ -385,121 +416,171 @@ ${cleanEnglishText}`;
 
   const activeServers = serverPool.filter(s => s.isEnabled);
   if (activeServers.length === 0) {
-    throw new Error('هیچ سرور فعالی در استخر سرورها انتخاب نشده است.');
+    throw new Error('هیچ سرور فعالی در استخر سرورها انتخاب نشده است. لطفاً از بخش «ویرایش سرورها» حداقل یک سرور را فعال کنید.');
   }
 
   const errors: string[] = [];
 
   for (let sIdx = 0; sIdx < activeServers.length; sIdx++) {
     const server = activeServers[sIdx];
-    try {
-      if (server.providerType === 'gemini') {
-        const key = server.apiKey?.trim();
-        if (!key) {
-          throw new Error('کلید API برای سرور جمینای در محیط کلاینت وارد نشده است.');
-        }
+    
+    // Extract candidate keys for this server (comma or newline separated)
+    const serverRawKeys = (server.apiKey || '').split(/[,\n]/).map(k => k.trim()).filter(Boolean);
+    
+    // If Gemini and no keys entered in this server, also check global client keys from localStorage
+    if (server.providerType === 'gemini' && serverRawKeys.length === 0) {
+      const globalKeys = getClientGeminiKeys();
+      serverRawKeys.push(...globalKeys);
+    }
 
-        const model = server.model || 'gemini-2.5-flash';
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    if (serverRawKeys.length === 0 && server.providerType !== 'gemini') {
+      errors.push(`سرور «${server.name}»: کلید API وارد نشده است`);
+      continue;
+    }
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // Try keys sequentially for this server (or empty string fallback)
+    const candidateKeys = serverRawKeys.length > 0 ? serverRawKeys : [''];
 
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: controller.signal,
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION_TRANSLATOR }] },
-            contents: [{ parts: [{ text: userPrompt }] }],
-            generationConfig: {
+    for (let kIdx = 0; kIdx < candidateKeys.length; kIdx++) {
+      const currentKey = candidateKeys[kIdx];
+      const isSwitch = sIdx > 0 || kIdx > 0;
+
+      try {
+        if (server.providerType === 'gemini') {
+          if (!currentKey) {
+            throw new Error('کلید API برای سرور جمینای وارد نشده است.');
+          }
+
+          // Candidate models with fast fallback if 503 high demand
+          const candidateModels = Array.from(new Set([
+            server.model || 'gemini-2.5-flash',
+            'gemini-2.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+          ]));
+
+          let lastModelErr: any = null;
+          for (const candModel of candidateModels) {
+            try {
+              const url = `https://generativelanguage.googleapis.com/v1beta/models/${candModel}:generateContent?key=${encodeURIComponent(currentKey)}`;
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 40000);
+
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({
+                  systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION_TRANSLATOR }] },
+                  contents: [{ parts: [{ text: userPrompt }] }],
+                  generationConfig: {
+                    temperature: 0.35,
+                    topP: 0.95,
+                  },
+                }),
+              });
+              clearTimeout(timeoutId);
+
+              const data = await res.json();
+              if (!res.ok) {
+                const errMsg = data?.error?.message || `خطای HTTP ${res.status}`;
+                if (errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('404')) {
+                  lastModelErr = new Error(errMsg);
+                  continue;
+                }
+                throw new Error(errMsg);
+              }
+
+              let rawHtml = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+              if (rawHtml.startsWith('```html')) {
+                rawHtml = rawHtml.replace(/^```html\s*/i, '').replace(/\s*```$/, '');
+              } else if (rawHtml.startsWith('```')) {
+                rawHtml = rawHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
+              }
+
+              const masked = `${currentKey.slice(0, 4)}...${currentKey.slice(-4)}`;
+              console.log(`[Auto-Switching Direct Client] Success via "${server.name}" using Key ${masked}`);
+
+              return {
+                translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
+                serverUsed: `${server.name}${isSwitch ? ' (سوئیچ خودکار)' : ''}`,
+                modelUsed: candModel,
+                switchOccurred: isSwitch,
+              };
+            } catch (mErr: any) {
+              lastModelErr = mErr;
+              if (mErr.message?.includes('503') || mErr.message?.includes('high demand')) {
+                continue;
+              }
+              throw mErr;
+            }
+          }
+          if (lastModelErr) throw lastModelErr;
+        } else {
+          // OpenAI-compatible (OpenRouter, DeepSeek, OpenAI, GLM, Groq)
+          const cleanBase = normalizeBaseUrl(server.providerType, server.baseURL);
+          const targetUrl = `${cleanBase.replace(/\/+$/, '')}/chat/completions`;
+
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentKey}`,
+          };
+
+          if (server.providerType === 'openrouter' || cleanBase.includes('openrouter.ai')) {
+            headers['HTTP-Referer'] = window.location.origin || 'https://openrouter.ai';
+            headers['X-Title'] = 'Persian Book Translator';
+          }
+
+          const res = await fetch(targetUrl, {
+            method: 'POST',
+            headers,
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: server.model,
+              messages: [
+                { role: 'system', content: SYSTEM_INSTRUCTION_TRANSLATOR },
+                { role: 'user', content: userPrompt },
+              ],
               temperature: 0.35,
-              topP: 0.95,
-            },
-          }),
-        });
-        clearTimeout(timeoutId);
+              top_p: 0.95,
+            }),
+          });
+          clearTimeout(timeoutId);
 
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error?.message || `خطای HTTP ${res.status}`);
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data?.error?.message || `خطای HTTP ${res.status}: ${res.statusText}`);
+          }
+
+          let rawHtml = data?.choices?.[0]?.message?.content?.trim() || '';
+          if (rawHtml.startsWith('```html')) {
+            rawHtml = rawHtml.replace(/^```html\s*/i, '').replace(/\s*```$/, '');
+          } else if (rawHtml.startsWith('```')) {
+            rawHtml = rawHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
+          }
+
+          const masked = `${currentKey.slice(0, 4)}...${currentKey.slice(-4)}`;
+          console.log(`[Auto-Switching Direct Client] Success via "${server.name}" using Key ${masked}`);
+
+          return {
+            translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
+            serverUsed: `${server.name}${isSwitch ? ' (سوئیچ خودکار)' : ''}`,
+            modelUsed: server.model,
+            switchOccurred: isSwitch,
+          };
         }
-
-        let rawHtml = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-        if (rawHtml.startsWith('```html')) {
-          rawHtml = rawHtml.replace(/^```html\s*/i, '').replace(/\s*```$/, '');
-        } else if (rawHtml.startsWith('```')) {
-          rawHtml = rawHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
-        }
-
-        return {
-          translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
-          serverUsed: `${server.name} (کلاینت مستقیم)`,
-          modelUsed: model,
-          switchOccurred: sIdx > 0,
-        };
-      } else {
-        // OpenAI-compatible
-        const key = server.apiKey?.trim();
-        if (!key) {
-          throw new Error(`کلید API برای سرور «${server.name}» وارد نشده است.`);
-        }
-
-        const cleanBase = normalizeBaseUrl(server.providerType, server.baseURL);
-        const targetUrl = `${cleanBase.replace(/\/+$/, '')}/chat/completions`;
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 45000);
-
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${key}`,
-        };
-
-        if (server.providerType === 'openrouter' || cleanBase.includes('openrouter.ai')) {
-          headers['HTTP-Referer'] = window.location.origin || 'https://openrouter.ai';
-          headers['X-Title'] = 'Persian Book Translator';
-        }
-
-        const res = await fetch(targetUrl, {
-          method: 'POST',
-          headers,
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: server.model,
-            messages: [
-              { role: 'system', content: SYSTEM_INSTRUCTION_TRANSLATOR },
-              { role: 'user', content: userPrompt },
-            ],
-            temperature: 0.35,
-            top_p: 0.95,
-          }),
-        });
-        clearTimeout(timeoutId);
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data?.error?.message || `خطای HTTP ${res.status}`);
-        }
-
-        let rawHtml = data?.choices?.[0]?.message?.content?.trim() || '';
-        if (rawHtml.startsWith('```html')) {
-          rawHtml = rawHtml.replace(/^```html\s*/i, '').replace(/\s*```$/, '');
-        } else if (rawHtml.startsWith('```')) {
-          rawHtml = rawHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
-        }
-
-        return {
-          translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
-          serverUsed: `${server.name} (کلاینت مستقیم)`,
-          modelUsed: server.model,
-          switchOccurred: sIdx > 0,
-        };
+      } catch (keyErr: any) {
+        const masked = currentKey ? `${currentKey.slice(0, 4)}...${currentKey.slice(-4)}` : 'پیش‌فرض';
+        const reason = keyErr?.message || 'خطا در اتصال';
+        console.warn(`[Auto-Switching Direct Client] Key ${masked} on "${server.name}" failed: ${reason}. Switching automatically to next key/server...`);
+        errors.push(`سرور «${server.name}» (کلید ${masked}): ${reason}`);
+        // Continues to next key (kIdx + 1) or next server (sIdx + 1)!
       }
-    } catch (err: any) {
-      errors.push(`سرور «${server.name}»: ${err.message || 'خطا در اتصال'}`);
     }
   }
 
-  throw new Error(`اتصال مستقیم به سرورهای تعریف‌شده برقرار نشد:\n${errors.join('\n')}`);
+  throw new Error(`سوئیچ میان تمامی کلیدها و سرورهای فعال انجام شد اما هیچ‌یک پاسخ ندادند:\n${errors.join('\n')}\nلطفاً در بخش ویرایش API کلیدها یا مدل‌ها را بررسی فرمایید.`);
 }

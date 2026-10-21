@@ -392,10 +392,21 @@ export const TranslationWorkspace: React.FC<TranslationWorkspaceProps> = ({
                     </div>
 
                     <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800 text-[11px] text-slate-300 space-y-1 text-right">
-                      <strong className="text-amber-300 block">راهنمای رفع خطای ۵۰۳ (High Demand):</strong>
-                      <p className="text-slate-400">
-                        ترافیک بالای سرورهای مدل انتخابی معمولاً چند ثانیه تا یک دقیقه طول می‌کشد. می‌توانید با دکمه زیر مستقیماً با مدل جایگزین پرسرعت ادامه دهید:
-                      </p>
+                      {currentChunk.errorMessage?.includes('HTML') || currentChunk.errorMessage?.includes('200') || currentChunk.errorMessage?.includes('۴۰۴') ? (
+                        <>
+                          <strong className="text-amber-300 block">راهنمای اتصال در سرور لینوکس (Ubuntu Nginx):</strong>
+                          <p className="text-slate-400 leading-relaxed">
+                            وب‌سرور Nginx به دلیل عدم تنظیم <span className="font-mono text-indigo-300">proxy_pass /api/</span>، صفحه اصلی فرانت را تحویل داده است. برای رفع فوری، دکمه «ویرایش سرورها» در زیر را بزنید و حالت اتصال را روی <strong>«مستقیم مرورگر»</strong> قرار دهید تا بدون نیاز به Nginx ترجمه انجام شود.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <strong className="text-amber-300 block">راهنمای سوئیچ خودکار و رفع خطای ۵۰۳:</strong>
+                          <p className="text-slate-400 leading-relaxed">
+                            در صورت ترافیک موقت یا اتمام سهمیه یک کلید، سیستم به طور خودکار به کلید و سرور بعدی در استخر سوئیچ می‌کند. با دکمه زیر می‌توانید مجدداً تلاش نمایید.
+                          </p>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1">
