@@ -1251,13 +1251,20 @@ app.post('/api/import/file', async (req, res) => {
   }
 });
 
-// Helper to generate proper multi-script font definition for Word (ensuring Persian text gets Vazirmatn Medium)
-function createFontDef(fontName: string = 'Vazirmatn Medium') {
+// Helper to standardize font name and generate proper multi-script font definition for Word
+function cleanFontFamily(fontName: string = 'Vazirmatn'): string {
+  if (!fontName) return 'Vazirmatn';
+  return fontName.replace(/\s+(Medium|Regular|Bold|Light|SemiBold|Black)$/i, '').trim() || 'Vazirmatn';
+}
+
+function createFontDef(fontName: string = 'Vazirmatn') {
+  const family = cleanFontFamily(fontName);
   return {
-    name: fontName,
-    cs: fontName,
-    ascii: fontName,
-    hAnsi: fontName,
+    name: family,
+    cs: family,       // Complex script for Persian in Word
+    ascii: family,
+    hAnsi: family,
+    eastAsia: family,
   };
 }
 
@@ -1655,6 +1662,22 @@ app.post('/api/export/docx', async (req, res) => {
     const themeKey = (designConfig?.themeId || 'spiritual') as keyof typeof BOOK_THEMES;
     const theme = BOOK_THEMES[themeKey] || BOOK_THEMES.spiritual;
     const doc = new Document({
+      styles: {
+        default: {
+          document: {
+            run: {
+              font: fontDef,
+              rightToLeft: true,
+              size: 24, // 12pt
+              color: '2D3748',
+            },
+            paragraph: {
+              alignment: AlignmentType.BOTH,
+              spacing: { line: 360, after: 180 },
+            },
+          },
+        },
+      },
       background: {
         color: (theme.pageBgColor || '#fbf6ea').replace('#', ''),
       },

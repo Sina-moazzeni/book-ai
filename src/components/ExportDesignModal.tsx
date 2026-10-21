@@ -70,8 +70,8 @@ export const ExportDesignModal: React.FC<ExportDesignModalProps> = ({
   const [showCoverPage, setShowCoverPage] = useState(initialConfig.showCoverPage ?? true);
   const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>(initialConfig.fontSize || 'medium');
   const [lineSpacing, setLineSpacing] = useState<'compact' | 'normal' | 'relaxed'>(initialConfig.lineSpacing || 'normal');
-  const [fontFamily, setFontFamily] = useState<'Vazirmatn Medium' | 'Vazirmatn' | 'B Nazanin' | 'Tahoma' | 'IRANSans'>(
-    initialConfig.fontFamily || 'Vazirmatn Medium'
+  const [fontFamily, setFontFamily] = useState<BookDesignConfig['fontFamily']>(
+    (initialConfig.fontFamily as any) || 'Vazirmatn'
   );
   const [borderStyle, setBorderStyle] = useState<BorderStyleId>(initialConfig.borderStyle || 'ornate_spiritual');
   const [backgroundPattern, setBackgroundPattern] = useState<BackgroundPatternId>(initialConfig.backgroundPattern || 'none');
@@ -135,7 +135,7 @@ export const ExportDesignModal: React.FC<ExportDesignModalProps> = ({
     const updatedProject = { ...project, designConfig: cfg };
     await downloadDocx(updatedProject);
     setIsExportingDocx(false);
-    setSavedBanner('فایل رسمی Word (.docx) با فونت Vazirmatn Medium و تنظیمات اختصاصی دانلود شد.');
+    setSavedBanner(`فایل رسمی Word (.docx) با قلم ${fontFamily} و تنظیمات اختصاصی ایجاد و دانلود شد.`);
     setTimeout(() => setSavedBanner(null), 3500);
   };
 
@@ -663,11 +663,11 @@ export const ExportDesignModal: React.FC<ExportDesignModalProps> = ({
                         onChange={e => setFontFamily(e.target.value as any)}
                         className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-white focus:outline-none focus:border-purple-500 font-medium"
                       >
-                        <option value="Vazirmatn Medium">Vazirmatn Medium (پیشنهادی)</option>
-                        <option value="Vazirmatn">Vazirmatn (عادی)</option>
-                        <option value="B Nazanin">B Nazanin (کتابی سنتی)</option>
-                        <option value="Tahoma">Tahoma (عمومی ویندوز)</option>
-                        <option value="IRANSans">IRANSans</option>
+                        <option value="Vazirmatn">Vazirmatn (پیش‌فرض مدرن و فصیح)</option>
+                        <option value="Tahoma">Tahoma (موجود در ۱۰۰٪ سیستم‌ها - بدون نیاز به نصب)</option>
+                        <option value="B Nazanin">B Nazanin (کتابی سنتی ناشران)</option>
+                        <option value="B Mitra">B Mitra (مناسب رمان و ادبیات)</option>
+                        <option value="IRANSans">IRANSans (ایران‌سنس)</option>
                       </select>
                     </div>
 
@@ -696,6 +696,57 @@ export const ExportDesignModal: React.FC<ExportDesignModalProps> = ({
                         <option value="relaxed">روان و باز (2.25)</option>
                       </select>
                     </div>
+                  </div>
+                </div>
+
+                {/* Word Font Explanation & Download Section */}
+                <div className="bg-amber-500/10 border border-amber-500/25 p-4 rounded-2xl space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-amber-400 font-bold">
+                      <Type className="w-4 h-4 text-amber-400" />
+                      <span>راهنمای مهم نمایش فونت‌ها در نرم‌افزار Microsoft Word:</span>
+                    </span>
+                    <span className="text-[10px] text-amber-300 bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/30">
+                      پشتیبانی کامل از فونت‌های فارسی
+                    </span>
+                  </div>
+                  <p className="text-slate-300 leading-relaxed text-[11px]">
+                    برخلاف مرورگر وب که فونت را به شکل اینترنتی دانلود و نمایش می‌دهد، نرم‌افزار <strong>Word</strong> فونت‌ها را از بین <strong>فونت‌های نصب‌شده روی ویندوز یا سیستم‌عامل شما</strong> فراخوانی می‌کند:
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-750">
+                      <span className="font-bold text-amber-300 block mb-1">روش اول: بدون نیاز به نصب هیچ فایلی</span>
+                      <span className="text-slate-400 leading-relaxed">
+                        فونت را روی <strong className="text-white">Tahoma</strong> بگذارید. تاهوما در ۱۰۰٪ نسخه‌های ویندوز و آفیس به شکل پیش‌فرض وجود دارد و فوراً با حروف‌چینی درست و منظم باز می‌شود.
+                      </span>
+                    </div>
+                    <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-750">
+                      <span className="font-bold text-amber-300 block mb-1">روش دوم: بالاترین کیفیت چاپی (وزیرمتن)</span>
+                      <span className="text-slate-400 leading-relaxed">
+                        پکیج فونت وزیرمتن را از دکمه زیر دریافت کنید؛ سپس فایل‌های TTF را باز کرده و دکمه <strong className="text-white">Install</strong> را بزنید (۲ ثانیه). از آن پس، تمام اسناد کتاب با شکوه وزیرمتن در ورد باز می‌شوند.
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="pt-1 flex flex-wrap items-center gap-2.5">
+                    <a
+                      href="/fonts/Vazirmatn-Fonts.zip"
+                      download="Vazirmatn-Fonts.zip"
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold transition flex items-center gap-1.5 text-xs shadow-md shadow-amber-500/20"
+                      title="دانلود پکیج کامل فونت‌های وزن‌های مختلف وزیرمتن به صورت زیپ"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-950" />
+                      <span>دانلود پکیج فونت‌های وزیرمتن برای ویندوز (ZIP)</span>
+                    </a>
+                    <a
+                      href="/fonts/Vazirmatn-Regular.ttf"
+                      download="Vazirmatn-Regular.ttf"
+                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 font-semibold transition flex items-center gap-1.5 text-xs"
+                      title="دانلود مستقیم فونت عادی وزیرمتن (فایل تک TTF)"
+                    >
+                      <Download className="w-3.5 h-3.5 text-amber-400" />
+                      <span>دانلود مستقیم فونت وزیرمتن (فایل TTF)</span>
+                    </a>
                   </div>
                 </div>
 

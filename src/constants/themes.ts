@@ -183,7 +183,7 @@ export const DEFAULT_DESIGN_CONFIG: BookDesignConfig = {
   showCoverPage: true,
   fontSize: 'medium',
   lineSpacing: 'normal',
-  fontFamily: 'Vazirmatn Medium',
+  fontFamily: 'Vazirmatn',
   borderStyle: 'ornate_spiritual',
   backgroundPattern: 'none',
   watermarkText: '',

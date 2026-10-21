@@ -103,7 +103,7 @@ export interface BookDesignConfig {
   showCoverPage: boolean;
   fontSize: 'small' | 'medium' | 'large';
   lineSpacing: 'compact' | 'normal' | 'relaxed';
-  fontFamily: 'Vazirmatn Medium' | 'Vazirmatn' | 'B Nazanin' | 'Tahoma' | 'IRANSans';
+  fontFamily: 'Vazirmatn' | 'Vazirmatn Medium' | 'B Nazanin' | 'B Mitra' | 'Tahoma' | 'IRANSans';
   borderStyle: BorderStyleId;
   backgroundPattern: BackgroundPatternId;
   watermarkText?: string;
