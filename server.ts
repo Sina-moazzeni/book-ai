@@ -10,7 +10,29 @@ import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { Document, Paragraph, TextRun, ImageRun, HeadingLevel, AlignmentType, Packer, BorderStyle, Header, Footer, PageNumber } from 'docx';
 import mammoth from 'mammoth';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import JSZip from 'jszip';
 import { BOOK_THEMES } from './src/constants/themes.ts';
+
+function cleanChapterTitle(title: string): string {
+  if (!title) return 'فصل کتاب';
+  let cleaned = title
+    .replace(/\s*[\(\[\{]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]/gi, '')
+    .replace(/\s*[-–—|:]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+/gi, '')
+    .replace(/\s+بخش\s+[0-9۰-۹IVXLCDMivxlcdm]+$/gi, '')
+    .replace(/\s*[\(\[\{]\s*(?:Part|Section|Chunk)\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]/gi, '')
+    .replace(/\s*[-–—|:]\s*(?:Part|Section|Chunk)\s*[0-9۰-۹IVXLCDMivxlcdm]+/gi, '')
+    .trim();
+  return cleaned || 'فصل کتاب';
+}
+
+function sanitizeTranslatedHtml(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<h[1-3][^>]*>\s*مقدمه و بخش نخست\s*(?:\([^\)]*\))?\s*<\/h[1-3]>/gi, '')
+    .replace(/<h[1-3][^>]*>[^<]*[\(\[\{]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}][^<]*<\/h[1-3]>/gi, '')
+    .replace(/<p[^>]*>\s*[\(\[\{]?\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]?\s*<\/p>/gi, '')
+    .trim();
+}
 
 dotenv.config();
 
@@ -154,6 +176,7 @@ Translation Principles:
 3. Custom Glossary Priority: Strictly prioritize the provided custom glossary mapping over default translations. Never translate proprietary terms inconsistently.
 4. Strict No-Summarization Guarantee: Under NO circumstances are you allowed to summarize, condense, abbreviate, skip, or omit any paragraph, sentence, metaphor, example, or dialogue. Every single paragraph and thought must be translated in full completeness.
 5. Faithful & Uncensored Translation: This is an official literary and scholarly book translation. Translate all text faithfully, directly, and without censorship, puritanical sanitization, moralizing, or softening. Preserve the author's original voice, register, realism, and vocabulary completely.
+6. Strict Chunk Cleanliness & Continuity (Zero Artificial Headers): Under NO circumstances are you allowed to output artificial chunk markers, part numbers, or invented headings such as «مقدمه و بخش نخست (بخش ۱)»، «بخش ۱»، «بخش ۲»، «(بخش ۱)»، "Part 1", "[Part 1]", etc., into the translation. Do NOT invent or inject a chapter heading unless the original English input text explicitly starts with an author's original title/heading. The chunks must flow together as seamless, continuous prose without artificial breaks.
 
 Formatting & Structural Rules (HTML / Rich Styling):
 To allow seamless export to DOCX and PDF with color-coded typography:
@@ -573,13 +596,14 @@ app.post('/api/translate', async (req, res) => {
   // Build the User Prompt exactly as specified in the brief with zero-summarization guarantee
   const userPrompt = `[CONFIGURATION]
 - Book Tone: ${tone || 'معنوی و خودشناسی'}
-- Chapter / Section Context: ${chapterTitle || 'بخش جاری کتاب'}
+- Chapter / Section Context: ${cleanChapterTitle(chapterTitle || 'بخش جاری کتاب')}
 - Glossary / واژه‌نامه اختصاصی:
 ${glossaryText}
 ${previousSummary ? `\n[PREVIOUS SUMMARY / CONTEXT]\n${previousSummary}\n` : ''}
 ${hasImages ? `\n[IMAGE PRESERVATION INSTRUCTION]\nThis text contains image placeholders like [[IMAGE_PRESERVED_SLOT_0]]. You MUST preserve every placeholder intact at its exact corresponding position between the translated paragraphs in Persian. Do NOT remove or modify image placeholders.\n` : ''}
 [CRITICAL INSTRUCTION]
-Do NOT summarize. Translate every single sentence, dialogue, nuance, and paragraph verbatim into fluent, natural Persian without omission or censorship.
+1. Do NOT summarize. Translate every single sentence, dialogue, nuance, and paragraph verbatim into fluent, natural Persian without omission or censorship.
+2. Do NOT invent, add, or output artificial chunk numbers, section labels, or headers such as "بخش ۱", "بخش ۲", "(بخش ۱)", "Part 1", etc. Translate only the actual text content.
 
 [INPUT TEXT TO TRANSLATE]
 ${cleanEnglishText}`;
@@ -741,6 +765,7 @@ ${cleanEnglishText}`;
             } else if (cleanHtml.startsWith('```')) {
               cleanHtml = cleanHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
             }
+            cleanHtml = sanitizeTranslatedHtml(cleanHtml);
 
             console.log(`[Auto-Switching Engine] Success via Server "${server.name}" using Key ${currentApiKey.slice(0, 4)}...`);
             return res.json({
@@ -834,6 +859,7 @@ ${cleanEnglishText}`;
       } else if (cleanHtml.startsWith('```')) {
         cleanHtml = cleanHtml.replace(/^```\s*/, '').replace(/\s*```$/, '');
       }
+      cleanHtml = sanitizeTranslatedHtml(cleanHtml);
 
       return res.json({
         chunkId,
@@ -963,9 +989,10 @@ ${cleanEnglishText}`;
   }
 
   if (successfulHtml) {
+    const sanitized = sanitizeTranslatedHtml(successfulHtml);
     return res.json({
       chunkId,
-      translatedHtml: restoreImages(successfulHtml, imagePlaceholderMap),
+      translatedHtml: restoreImages(sanitized, imagePlaceholderMap),
       keyUsed: keyUsedName,
       model: successfulModel,
       fallbackUsed: successfulModel !== targetModel,
@@ -1040,7 +1067,7 @@ app.post('/api/import/file', async (req, res) => {
     }
 
     const buffer = Buffer.from(fileData, 'base64');
-    const detectedType = fileType || (fileName?.endsWith('.docx') ? 'docx' : fileName?.endsWith('.pdf') ? 'pdf' : 'txt');
+    const detectedType = fileType || (fileName?.endsWith('.docx') ? 'docx' : fileName?.endsWith('.pdf') ? 'pdf' : fileName?.toLowerCase()?.endsWith('.epub') ? 'epub' : 'txt');
 
     const cleanBaseName = (fileName || 'کتاب جدید').replace(/\.[^/.]+$/, '');
     let title = cleanBaseName;
@@ -1219,6 +1246,145 @@ app.post('/api/import/file', async (req, res) => {
           imageCount: pageImageCount,
         });
         globalChunkCounter++;
+      }
+    } else if (detectedType === 'epub') {
+      const zip = await JSZip.loadAsync(buffer);
+      const containerXml = await zip.file('META-INF/container.xml')?.async('text');
+      if (!containerXml) {
+        throw new Error('فایل EPUB فاقد ساختار استاندارد است (container.xml یافت نشد).');
+      }
+
+      const opfPathMatch = /full-path=["']([^"']+\.opf)["']/i.exec(containerXml);
+      if (!opfPathMatch) {
+        throw new Error('مسیر فایل پکیج (.opf) در فایل EPUB یافت نشد.');
+      }
+
+      const opfPath = opfPathMatch[1];
+      const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/')) : '';
+      const opfContent = await zip.file(opfPath)?.async('text');
+      if (!opfContent) {
+        throw new Error(`فایل پکیج EPUB در مسیر ${opfPath} یافت نشد.`);
+      }
+
+      const tMatch = /<dc:title[^>]*>([\s\S]*?)<\/dc:title>/i.exec(opfContent);
+      if (tMatch && tMatch[1].trim()) title = tMatch[1].replace(/<[^>]+>/g, '').trim();
+
+      const aMatch = /<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i.exec(opfContent);
+      if (aMatch && aMatch[1].trim()) author = aMatch[1].replace(/<[^>]+>/g, '').trim();
+
+      const manifestMap = new Map<string, { href: string; mediaType: string; zipPath: string }>();
+      const itemRegex = /<item\s+[^>]*>/gi;
+      let m;
+      while ((m = itemRegex.exec(opfContent)) !== null) {
+        const itemTag = m[0];
+        const idM = /id=["']([^"']+)["']/i.exec(itemTag);
+        const hrefM = /href=["']([^"']+)["']/i.exec(itemTag);
+        const mediaM = /media-type=["']([^"']+)["']/i.exec(itemTag);
+        if (idM && hrefM) {
+          const href = decodeURIComponent(hrefM[1]);
+          const zipPath = opfDir ? `${opfDir}/${href}`.replace(/\/+/g, '/') : href;
+          manifestMap.set(idM[1], {
+            href,
+            mediaType: mediaM ? mediaM[1].toLowerCase() : '',
+            zipPath,
+          });
+        }
+      }
+
+      const imageMap = new Map<string, string>();
+      for (const item of manifestMap.values()) {
+        if (item.mediaType.startsWith('image/')) {
+          const imgFile = zip.file(item.zipPath);
+          if (imgFile) {
+            try {
+              const b64 = await imgFile.async('base64');
+              const dataUrl = `data:${item.mediaType};base64,${b64}`;
+              imageMap.set(item.zipPath, dataUrl);
+              const bName = item.zipPath.split('/').pop() || '';
+              if (bName) imageMap.set(bName, dataUrl);
+              totalImagesCount++;
+            } catch (e) {}
+          }
+        }
+      }
+
+      const spineIds: string[] = [];
+      const itemrefRegex = /<itemref\s+[^>]*idref=["']([^"']+)["'][^>]*>/gi;
+      while ((m = itemrefRegex.exec(opfContent)) !== null) {
+        spineIds.push(m[1]);
+      }
+      if (spineIds.length === 0) {
+        manifestMap.forEach((it, k) => {
+          if (it.mediaType.includes('xhtml') || it.mediaType.includes('html')) spineIds.push(k);
+        });
+      }
+
+      let globalChunkCounter = 1;
+      let chapterIdx = 1;
+
+      for (const sId of spineIds) {
+        const it = manifestMap.get(sId);
+        if (!it) continue;
+        const cFile = zip.file(it.zipPath);
+        if (!cFile) continue;
+        const xhtml = await cFile.async('text');
+
+        let cTitle = `فصل ${chapterIdx}`;
+        const headM = /<(?:h[1-3]|title)[^>]*>([\s\S]*?)<\/(?:h[1-3]|title)>/i.exec(xhtml);
+        if (headM && headM[1].replace(/<[^>]+>/g, '').trim()) {
+          cTitle = headM[1].replace(/<[^>]+>/g, '').trim();
+        }
+
+        let modHtml = xhtml;
+        for (const [p, dUrl] of imageMap.entries()) {
+          const fn = p.split('/').pop() || '';
+          modHtml = modHtml.replace(
+            new RegExp(`src=["'][^"']*${fn}["']`, 'gi'),
+            `src="${dUrl}" class="book-embedded-image rounded-xl shadow-md my-4 max-w-full mx-auto block border border-slate-300"`
+          );
+        }
+
+        const blocks = modHtml.match(/<(?:p|h[1-3]|blockquote|figure)[^>]*>[\s\S]*?<\/(?:p|h[1-3]|blockquote|figure)>/gi) || [modHtml];
+        let curChunkHtml: string[] = [];
+        let curWordCount = 0;
+        let subChunk = 1;
+
+        const commitChunk = () => {
+          if (curChunkHtml.length === 0) return;
+          const chunkStr = curChunkHtml.join('\n');
+          const plain = chunkStr.replace(/<img[^>]*>/gi, '').replace(/<[^>]+>/g, ' ').trim();
+          const words = plain.split(/\s+/).filter(Boolean).length;
+          const hasImg = /<img[^>]*>/i.test(chunkStr);
+          const imgCount = (chunkStr.match(/<img[^>]*>/gi) || []).length;
+
+          chunks.push({
+            id: `chk_${Date.now()}_${globalChunkCounter}`,
+            chapterNumber: chapterIdx,
+            chapterTitle: cTitle,
+            chunkNumber: subChunk,
+            englishText: chunkStr,
+            wordCount: Math.max(1, words),
+            estimatedTokens: Math.ceil(words * 1.35),
+            status: 'idle',
+            hasImages: hasImg,
+            imageCount: imgCount,
+          });
+          globalChunkCounter++;
+          subChunk++;
+          curChunkHtml = [];
+          curWordCount = 0;
+        };
+
+        for (const b of blocks) {
+          const bWords = b.replace(/<img[^>]*>/gi, '').replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+          if (curWordCount + bWords > maxWordsPerChunk && curWordCount > 200) {
+            commitChunk();
+          }
+          curChunkHtml.push(b);
+          curWordCount += bWords;
+        }
+        commitChunk();
+        chapterIdx++;
       }
     } else {
       // Plain text fallback

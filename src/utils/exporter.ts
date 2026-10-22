@@ -11,9 +11,78 @@ import {
   Footer,
   PageNumber,
 } from 'docx';
-import { BookProject } from '../types.ts';
+import { BookProject, BookChunk } from '../types.ts';
 import { BOOK_THEMES } from '../constants/themes.ts';
 import { resolveApiUrl } from './aiClient.ts';
+
+/**
+ * Clean chapter titles by removing artificial chunk suffixes like:
+ * "(بخش 1)", "(بخش ۱)", "- بخش 1", "بخش 1", "[Part 1]", "(Part 1)", etc.
+ */
+export function cleanChapterTitle(title: string): string {
+  if (!title) return 'فصل کتاب';
+  let cleaned = title
+    .replace(/\s*[\(\[\{]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]/gi, '')
+    .replace(/\s*[-–—|:]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+/gi, '')
+    .replace(/\s+بخش\s+[0-9۰-۹IVXLCDMivxlcdm]+$/gi, '')
+    .replace(/\s*[\(\[\{]\s*(?:Part|Section|Chunk)\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]/gi, '')
+    .replace(/\s*[-–—|:]\s*(?:Part|Section|Chunk)\s*[0-9۰-۹IVXLCDMivxlcdm]+/gi, '')
+    .trim();
+
+  return cleaned || 'فصل کتاب';
+}
+
+/**
+ * Removes any artificial chunk headers injected by AI models into HTML
+ */
+export function sanitizeTranslatedHtml(html: string): string {
+  if (!html) return '';
+  return html
+    .replace(/<h[1-3][^>]*>\s*مقدمه و بخش نخست\s*(?:\([^\)]*\))?\s*<\/h[1-3]>/gi, '')
+    .replace(/<h[1-3][^>]*>[^<]*[\(\[\{]\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}][^<]*<\/h[1-3]>/gi, '')
+    .replace(/<p[^>]*>\s*[\(\[\{]?\s*بخش\s*[0-9۰-۹IVXLCDMivxlcdm]+\s*[\)\]\}]?\s*<\/p>/gi, '')
+    .trim();
+}
+
+export interface GroupedChapter {
+  chapterKey: string;
+  title: string;
+  htmlContent: string;
+}
+
+/**
+ * Groups consecutive chunks belonging to the same chapter into one continuous chapter flow.
+ * Ensures the chapter title is displayed only ONCE and sub-chunks flow seamlessly without repeating headers or mid-chapter page breaks.
+ */
+export function groupChunksIntoChapters(chunks: BookChunk[]): GroupedChapter[] {
+  const validChunks = chunks.filter(c => c.translatedHtml && c.translatedHtml.trim().length > 0);
+  if (validChunks.length === 0) return [];
+
+  const chapters: GroupedChapter[] = [];
+  let currentChapter: GroupedChapter | null = null;
+
+  for (const chunk of validChunks) {
+    const rawTitle = chunk.chapterTitle || 'فصل کتاب';
+    const cleanedTitle = cleanChapterTitle(rawTitle);
+    const sanitizedChunkHtml = sanitizeTranslatedHtml(chunk.translatedHtml || '');
+    if (!sanitizedChunkHtml) continue;
+
+    const chapterKey = chunk.chapterNumber ? `ch_${chunk.chapterNumber}` : cleanedTitle;
+
+    if (!currentChapter || currentChapter.chapterKey !== chapterKey) {
+      currentChapter = {
+        chapterKey,
+        title: cleanedTitle,
+        htmlContent: sanitizedChunkHtml,
+      };
+      chapters.push(currentChapter);
+    } else {
+      currentChapter.htmlContent += `\n${sanitizedChunkHtml}`;
+    }
+  }
+
+  return chapters;
+}
 
 /**
  * Standardize font names for Microsoft Word.
@@ -218,15 +287,15 @@ export function buildClientDocxDocument(project: BookProject): Document {
     })
   );
 
-  // Chapters & paragraphs
-  const translatedChunks = project.chunks.filter(c => c.translatedHtml && c.translatedHtml.trim().length > 0);
+  // Chapters & paragraphs grouped seamlessly by genuine chapter
+  const groupedChapters = groupChunksIntoChapters(project.chunks);
 
-  translatedChunks.forEach((c, chIdx) => {
+  groupedChapters.forEach((ch, chIdx) => {
     if (chIdx > 0) {
       docChildren.push(new Paragraph({ pageBreakBefore: true }));
     }
 
-    // Chapter Header
+    // Chapter Header (Rendered ONCE per chapter)
     docChildren.push(
       new Paragraph({
         heading: HeadingLevel.HEADING_1,
@@ -235,7 +304,7 @@ export function buildClientDocxDocument(project: BookProject): Document {
         bidirectional: true,
         children: [
           new TextRun({
-            text: `${c.chapterTitle} (بخش ${c.chunkNumber})`,
+            text: ch.title,
             font: fontDef,
             size: 36, // 18pt
             bold: true,
@@ -246,7 +315,7 @@ export function buildClientDocxDocument(project: BookProject): Document {
       })
     );
 
-    const html = c.translatedHtml || '';
+    const html = ch.htmlContent || '';
     const blockRegex = /<(h[1-3]|p|blockquote|div|figure)[^>]*>([\s\S]*?)<\/\1>|<img\s+[^>]*src=["'](data:image\/[^"']+)["'][^>]*>/gi;
     let match;
     let foundAny = false;
@@ -582,6 +651,7 @@ export async function downloadDocx(project: BookProject): Promise<boolean> {
 
     // 2. Server proxy fallback
     try {
+      const groupedChapters = groupChunksIntoChapters(project.chunks);
       const res = await fetch(resolveApiUrl('/api/export/docx'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -589,9 +659,9 @@ export async function downloadDocx(project: BookProject): Promise<boolean> {
           title: project.title || project.originalTitle || 'کتاب ترجمه شده',
           author: project.author,
           translator: project.translator || 'سامانه هوشمند ترجمه کتاب',
-          chapters: chapters.map(c => ({
-            title: `${c.chapterTitle} (بخش ${c.chunkNumber})`,
-            htmlContent: c.translatedHtml,
+          chapters: groupedChapters.map(ch => ({
+            title: ch.title,
+            htmlContent: ch.htmlContent,
           })),
           designConfig: project.designConfig,
         }),
@@ -644,18 +714,19 @@ export function downloadWordHtml(project: BookProject) {
   const headingColor = theme.headingColor || '#1a365d';
   const accentColor = theme.accentColor || '#b45309';
 
-  const chaptersHtml = project.chunks
-    .filter(c => c.translatedHtml)
-    .map(c => `
-      <div style="page-break-before: always; margin-top: 30px;">
+  const groupedChapters = groupChunksIntoChapters(project.chunks);
+
+  const chaptersHtml = groupedChapters
+    .map((ch, idx) => `
+      <div style="${idx > 0 ? 'page-break-before: always; ' : ''}margin-top: 30px;">
         ${design.showHeader && design.headerText ? `
         <div style="border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 24px; font-size: 9pt; color: #718096; display: flex; justify-content: space-between;">
           <span>${design.headerText}</span>
           <span dir="ltr">${project.originalTitle || ''}</span>
         </div>` : ''}
-        <h2 style="color: ${headingColor}; font-size: 18pt; text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-family: '${fontFamily}', 'Vazirmatn', 'B Nazanin', 'Tahoma', sans-serif; mso-bidi-font-family: '${fontFamily}';">${c.chapterTitle} - بخش ${c.chunkNumber}</h2>
+        <h2 style="color: ${headingColor}; font-size: 18pt; text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; font-family: '${fontFamily}', 'Vazirmatn', 'B Nazanin', 'Tahoma', sans-serif; mso-bidi-font-family: '${fontFamily}';">${ch.title}</h2>
         <div style="text-align: center; font-size: 11pt; color: ${accentColor}; margin: 8px 0 16px 0;">${theme.dividerSymbol || '❦ ✤ ❦'}</div>
-        <div style="margin-top: 20px;">${c.translatedHtml}</div>
+        <div style="margin-top: 20px;">${ch.htmlContent}</div>
         ${design.showFooter && design.footerText ? `
         <div style="border-top: 1px solid #cbd5e1; padding-top: 6px; margin-top: 35px; font-size: 9pt; color: #718096; text-align: center;">
           ${design.footerText}
@@ -729,12 +800,12 @@ export function downloadWordHtml(project: BookProject) {
 }
 
 export function downloadStyledHtml(project: BookProject) {
-  const content = project.chunks
-    .filter(c => c.translatedHtml)
-    .map(c => `
+  const groupedChapters = groupChunksIntoChapters(project.chunks);
+  const content = groupedChapters
+    .map(ch => `
       <section class="chapter-section" style="margin-bottom: 50px; border-bottom: 1px solid #e2e8f0; padding-bottom: 30px;">
-        <div class="chapter-meta" style="color: #718096; font-size: 14px; margin-bottom: 10px;">${c.chapterTitle} | بخش ${c.chunkNumber}</div>
-        ${c.translatedHtml}
+        <h2 class="chapter-title" style="color: #1a365d; font-size: 20pt; text-align: center; margin-bottom: 25px;">${ch.title}</h2>
+        ${ch.htmlContent}
       </section>
     `)
     .join('\n');
@@ -807,19 +878,18 @@ export function downloadPlainText(project: BookProject) {
   if (project.translator) plain += `مترجم: ${project.translator}\n`;
   plain += `\n=========================================\n\n`;
 
-  project.chunks
-    .filter(c => c.translatedHtml)
-    .forEach(c => {
-      plain += `### ${c.chapterTitle} (بخش ${c.chunkNumber})\n\n`;
-      const textOnly = (c.translatedHtml || '')
-        .replace(/<\/p>/gi, '\n\n')
-        .replace(/<\/h[1-6]>/gi, '\n\n')
-        .replace(/<\/blockquote>/gi, '\n\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      plain += `${textOnly}\n\n-----------------------------------------\n\n`;
-    });
+  const groupedChapters = groupChunksIntoChapters(project.chunks);
+  groupedChapters.forEach(ch => {
+    plain += `## ${ch.title}\n\n`;
+    const textOnly = (ch.htmlContent || '')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<\/blockquote>/gi, '\n\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    plain += `${textOnly}\n\n-----------------------------------------\n\n`;
+  });
 
   const blob = new Blob([plain], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);

@@ -19,6 +19,8 @@ import { BookProject, ToneId, BookChunk } from '../types.ts';
 import { TONE_DEFINITIONS, DEFAULT_GLOSSARIES } from '../constants/tones.ts';
 import { chunkBookText } from '../utils/chunker.ts';
 import { resolveApiUrl } from '../utils/aiClient.ts';
+import { parseEpubFile } from '../utils/epubParser.ts';
+import { cleanChapterTitle } from '../utils/exporter.ts';
 
 interface NewBookModalProps {
   isOpen: boolean;
@@ -48,7 +50,7 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [preChunkedData, setPreChunkedData] = useState<BookChunk[] | null>(null);
   const [extractedImagesCount, setExtractedImagesCount] = useState<number>(0);
-  const [detectedFileType, setDetectedFileType] = useState<'txt' | 'docx' | 'pdf' | 'json'>('txt');
+  const [detectedFileType, setDetectedFileType] = useState<'txt' | 'docx' | 'pdf' | 'epub' | 'json'>('txt');
 
   if (!isOpen) return null;
 
@@ -92,7 +94,50 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
       return;
     }
 
-    // 2. Word (.docx) or PDF (.pdf) with full text and image extraction
+    // 2. EPUB Book (.epub)
+    if (file.name.toLowerCase().endsWith('.epub')) {
+      setDetectedFileType('epub');
+      setIsProcessingFile(true);
+      setProcessingStatus('در حال استخراج فصول، متن و تصاویر از کتاب الکترونیکی EPUB...');
+
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const arrayBuffer = event.target?.result as ArrayBuffer;
+          const parsed = await parseEpubFile(arrayBuffer, file.name, maxWordsPerChunk);
+
+          setPreChunkedData(parsed.chunks);
+          setExtractedImagesCount(parsed.totalImagesCount || 0);
+
+          if (parsed.title && !title) setTitle(parsed.title);
+          if (parsed.originalTitle && !originalTitle) setOriginalTitle(parsed.originalTitle);
+          if (parsed.author && parsed.author !== 'نامشخص' && !author) setAuthor(parsed.author);
+
+          // Build a readable preview without artificial chunk numbers
+          const combinedPreview = parsed.chunks
+            .map(
+              (c: any) =>
+                `### ${cleanChapterTitle(c.chapterTitle)}\n\n${c.englishText
+                  .replace(/<img[^>]*>/gi, '[🖼️ تصویر کتاب]')
+                  .replace(/<[^>]+>/g, ' ')
+                  .trim()}`
+            )
+            .join('\n\n-----------------------------------------\n\n');
+
+          setRawText(combinedPreview);
+        } catch (err: any) {
+          console.error('EPUB Import error:', err);
+          alert(`خطا در پردازش فایل EPUB: ${err.message}`);
+        } finally {
+          setIsProcessingFile(false);
+          setProcessingStatus(null);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+      return;
+    }
+
+    // 3. Word (.docx) or PDF (.pdf) with full text and image extraction
     if (file.name.endsWith('.docx') || file.name.endsWith('.pdf')) {
       const type = file.name.endsWith('.docx') ? 'docx' : 'pdf';
       setDetectedFileType(type);
@@ -132,11 +177,11 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
           if (data.originalTitle && !originalTitle) setOriginalTitle(data.originalTitle);
           if (data.author && data.author !== 'نامشخص' && !author) setAuthor(data.author);
 
-          // Build a readable preview for the textarea
+          // Build a readable preview for the textarea without artificial (بخش X)
           const combinedPreview = data.chunks
             .map(
               (c: any) =>
-                `### ${c.chapterTitle} (بخش ${c.chunkNumber})\n\n${c.englishText
+                `### ${cleanChapterTitle(c.chapterTitle)}\n\n${c.englishText
                   .replace(/<img[^>]*>/gi, '[🖼️ تصویر کتاب]')
                   .replace(/<[^>]+>/g, ' ')
                   .trim()}`
@@ -255,10 +300,13 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
                     ? processingStatus
                     : fileName
                     ? `فایل انتخاب شده: ${fileName}`
-                    : 'کلیک کنید یا فایل کتاب را اینجا رها کنید (Word، PDF یا Text)'}
+                    : 'کلیک کنید یا فایل کتاب را اینجا رها کنید (EPUB، Word، PDF یا Text)'}
                 </span>
 
                 <div className="flex flex-wrap items-center justify-center gap-2 mt-2">
+                  <span className="text-[10px] bg-emerald-500/15 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30 font-semibold">
+                    کتاب استاندارد (.epub)
+                  </span>
                   <span className="text-[10px] bg-blue-500/10 text-blue-300 px-2 py-0.5 rounded-full border border-blue-500/30 font-semibold">
                     سند ورد (.docx)
                   </span>
@@ -276,7 +324,7 @@ export const NewBookModal: React.FC<NewBookModalProps> = ({
 
               <input
                 type="file"
-                accept=".docx,.pdf,.txt,.md,.json"
+                accept=".docx,.pdf,.epub,.txt,.md,.json,application/epub+zip"
                 onChange={handleFileUpload}
                 disabled={isProcessingFile}
                 className="hidden"

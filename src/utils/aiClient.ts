@@ -1,4 +1,5 @@
 import { APIServerEndpoint, ProviderType, GlossaryItem } from '../types.ts';
+import { cleanChapterTitle, sanitizeTranslatedHtml } from './exporter.ts';
 
 export type ConnectionMode = 'auto' | 'direct' | 'server';
 
@@ -125,6 +126,7 @@ Translation Principles:
 3. Custom Glossary Priority: Strictly prioritize the provided custom glossary mapping over default translations. Never translate proprietary terms inconsistently.
 4. Strict No-Summarization Guarantee: Under NO circumstances are you allowed to summarize, condense, abbreviate, skip, or omit any paragraph, sentence, metaphor, example, or dialogue. Every single paragraph and thought must be translated in full completeness.
 5. Faithful & Uncensored Translation: This is an official literary and scholarly book translation. Translate all text faithfully, directly, and without censorship, puritanical sanitization, moralizing, or softening. Preserve the author's original voice, register, realism, and vocabulary completely.
+6. Strict Chunk Cleanliness & Continuity (Zero Artificial Headers): Under NO circumstances are you allowed to output artificial chunk markers, part numbers, or invented headings such as «مقدمه و بخش نخست (بخش ۱)»، «بخش ۱»، «بخش ۲»، «(بخش ۱)»، "Part 1", "[Part 1]", etc., into the translation. Do NOT invent or inject a chapter heading unless the original English input text explicitly starts with an author's original title/heading. The chunks must flow together as seamless, continuous prose without artificial breaks.
 
 Formatting & Structural Rules (HTML / Rich Styling):
 To allow seamless export to DOCX and PDF with color-coded typography:
@@ -404,12 +406,13 @@ export async function translateDirectFromClient({
 
   const userPrompt = `[CONFIGURATION]
 - Book Tone: ${tone || 'معنوی و خودشناسی'}
-- Chapter / Section Context: ${chapterTitle || 'بخش جاری کتاب'}
+- Chapter / Section Context: ${cleanChapterTitle(chapterTitle || 'بخش جاری کتاب')}
 - Glossary / واژه‌نامه اختصاصی:
 ${glossaryText}
 ${hasImages ? `\n[IMAGE PRESERVATION INSTRUCTION]\nThis text contains image placeholders like [[IMAGE_PRESERVED_SLOT_0]]. You MUST preserve every placeholder intact at its exact corresponding position between the translated paragraphs in Persian. Do NOT remove or modify image placeholders.\n` : ''}
 [CRITICAL INSTRUCTION]
-Do NOT summarize. Translate every single sentence, dialogue, nuance, and paragraph verbatim into fluent, natural Persian without omission or censorship.
+1. Do NOT summarize. Translate every single sentence, dialogue, nuance, and paragraph verbatim into fluent, natural Persian without omission or censorship.
+2. Do NOT invent, add, or output artificial chunk numbers, section labels, or headers such as "بخش ۱", "بخش ۲", "(بخش ۱)", "Part 1", etc. Translate only the actual text content.
 
 [INPUT TEXT TO TRANSLATE]
 ${cleanEnglishText}`;
@@ -502,7 +505,7 @@ ${cleanEnglishText}`;
               console.log(`[Auto-Switching Direct Client] Success via "${server.name}" using Key ${masked}`);
 
               return {
-                translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
+                translatedHtml: restoreImages(sanitizeTranslatedHtml(rawHtml), imagePlaceholderMap),
                 serverUsed: `${server.name}${isSwitch ? ' (سوئیچ خودکار)' : ''}`,
                 modelUsed: candModel,
                 switchOccurred: isSwitch,
@@ -566,7 +569,7 @@ ${cleanEnglishText}`;
           console.log(`[Auto-Switching Direct Client] Success via "${server.name}" using Key ${masked}`);
 
           return {
-            translatedHtml: restoreImages(rawHtml, imagePlaceholderMap),
+            translatedHtml: restoreImages(sanitizeTranslatedHtml(rawHtml), imagePlaceholderMap),
             serverUsed: `${server.name}${isSwitch ? ' (سوئیچ خودکار)' : ''}`,
             modelUsed: server.model,
             switchOccurred: isSwitch,

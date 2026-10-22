@@ -126,7 +126,7 @@ export interface BookProject {
   updatedAt: number;
   rollingSummary?: string;
   designConfig?: BookDesignConfig;
-  sourceFileType?: 'txt' | 'docx' | 'pdf' | 'json';
+  sourceFileType?: 'txt' | 'docx' | 'pdf' | 'epub' | 'json';
   totalImagesCount?: number;
 }
 

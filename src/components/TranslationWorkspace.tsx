@@ -20,6 +20,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { BookChunk, BookProject, APIServerEndpoint } from '../types.ts';
+import { cleanChapterTitle, groupChunksIntoChapters } from '../utils/exporter.ts';
 
 interface TranslationWorkspaceProps {
   currentChunk: BookChunk | null;
@@ -121,7 +122,7 @@ export const TranslationWorkspace: React.FC<TranslationWorkspaceProps> = ({
                 <ArrowRight className="w-3.5 h-3.5" />
               </button>
               <span className="text-xs text-slate-400 px-2 font-mono">
-                {currentChunk ? `بخش ${currentChunk.chunkNumber} (${currentChunk.chapterTitle})` : ''}
+                {currentChunk ? `بخش ${currentChunk.chunkNumber} • ${cleanChapterTitle(currentChunk.chapterTitle)}` : ''}
               </span>
               <button
                 onClick={onSelectNextChunk}
@@ -255,23 +256,17 @@ export const TranslationWorkspace: React.FC<TranslationWorkspaceProps> = ({
 
               {/* Book Chapters Loop */}
               <div className="space-y-12">
-                {project.chunks.map((chk, idx) => (
-                  <div key={chk.id} className="book-chapter-block">
-                    <div className="flex items-center justify-between text-xs text-slate-400 mb-3 pb-2 border-b border-slate-100">
-                      <span className="font-semibold text-blue-700">{chk.chapterTitle} - بخش {chk.chunkNumber}</span>
-                      <span className="font-mono">{chk.wordCount} کلمه</span>
+                {groupChunksIntoChapters(project.chunks).map((ch) => (
+                  <div key={ch.chapterKey} className="book-chapter-block border-b border-slate-100 pb-10 last:border-b-0">
+                    <div className="text-center mb-6">
+                      <h2 className="text-2xl font-bold text-[#1a365d] mb-2">{ch.title}</h2>
+                      <div className="text-amber-600 opacity-60 text-sm">❦ ✤ ❦</div>
                     </div>
 
-                    {chk.translatedHtml ? (
-                      <div
-                        className="book-render-content"
-                        dangerouslySetInnerHTML={{ __html: chk.translatedHtml }}
-                      />
-                    ) : (
-                      <div className="py-8 text-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                        این بخش هنوز ترجمه نشده است.
-                      </div>
-                    )}
+                    <div
+                      className="book-render-content text-justify leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: ch.htmlContent }}
+                    />
                   </div>
                 ))}
               </div>

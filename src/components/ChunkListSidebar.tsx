@@ -12,6 +12,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { BookChunk } from '../types.ts';
+import { cleanChapterTitle } from '../utils/exporter.ts';
 
 interface ChunkListSidebarProps {
   chunks: BookChunk[];
@@ -126,7 +127,7 @@ export const ChunkListSidebar: React.FC<ChunkListSidebarProps> = ({
                   <div className="flex items-center gap-1.5 font-medium text-xs text-slate-200">
                     <Hash className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                     <span className="truncate max-w-[170px]" title={chunk.chapterTitle}>
-                      {chunk.chapterTitle}
+                      {cleanChapterTitle(chunk.chapterTitle)}
                     </span>
                   </div>
 

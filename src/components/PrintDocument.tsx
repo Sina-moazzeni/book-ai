@@ -1,6 +1,6 @@
-import React from 'react';
 import { BookProject } from '../types.ts';
 import { BOOK_THEMES, DEFAULT_DESIGN_CONFIG } from '../constants/themes.ts';
+import { groupChunksIntoChapters } from '../utils/exporter.ts';
 
 interface PrintDocumentProps {
   project: BookProject;
@@ -203,61 +203,59 @@ export const PrintDocument: React.FC<PrintDocumentProps> = ({ project }) => {
 
         {/* Chapters Content */}
         <div className="space-y-12">
-          {project.chunks
-            .filter(c => c.translatedHtml && c.translatedHtml.trim().length > 0)
-            .map((chunk, idx) => (
+          {groupChunksIntoChapters(project.chunks).map((chapter, idx, allChapters) => (
+            <div
+              key={chapter.chapterKey}
+              className={`book-chapter-break pt-6 ${
+                design.borderStyle === 'ornate_spiritual'
+                  ? 'p-6 rounded-2xl border-2 border-double my-6'
+                  : design.borderStyle === 'double_classic'
+                  ? 'p-6 rounded-xl border-4 border-double my-6'
+                  : design.borderStyle === 'thin_modern'
+                  ? 'p-6 rounded-xl border my-6'
+                  : ''
+              }`}
+              style={{
+                lineHeight: lineSpacingStyle,
+                borderColor: theme.borderColor,
+              }}
+            >
+              {/* Chapter Header (Rendered ONCE per chapter) */}
+              <div className="text-center mb-8 space-y-2">
+                <h2
+                  className="text-2xl font-extrabold tracking-tight"
+                  style={{ color: theme.headingColor }}
+                >
+                  {chapter.title}
+                </h2>
+                <div
+                  className="text-sm font-serif opacity-80"
+                  style={{ color: theme.accentColor }}
+                >
+                  {theme.dividerSymbol}
+                </div>
+              </div>
+
+              {/* Continuous Chapter Body with Preserved Colors & Highlights */}
               <div
-                key={chunk.id}
-                className={`book-chapter-break pt-6 ${
-                  design.borderStyle === 'ornate_spiritual'
-                    ? 'p-6 rounded-2xl border-2 border-double my-6'
-                    : design.borderStyle === 'double_classic'
-                    ? 'p-6 rounded-xl border-4 border-double my-6'
-                    : design.borderStyle === 'thin_modern'
-                    ? 'p-6 rounded-xl border my-6'
-                    : ''
-                }`}
+                className={`book-render-content ${fontSizeClass} text-justify`}
                 style={{
                   lineHeight: lineSpacingStyle,
-                  borderColor: theme.borderColor,
                 }}
-              >
-                {/* Chapter Section Header */}
-                <div className="text-center mb-6 space-y-1.5">
-                  <h2
-                    className="text-xl font-extrabold tracking-tight"
-                    style={{ color: theme.headingColor }}
-                  >
-                    {chunk.chapterTitle} - بخش {chunk.chunkNumber}
-                  </h2>
-                  <div
-                    className="text-sm font-serif opacity-80"
-                    style={{ color: theme.accentColor }}
-                  >
-                    {theme.dividerSymbol}
-                  </div>
-                </div>
+                dangerouslySetInnerHTML={{ __html: chapter.htmlContent }}
+              />
 
-                {/* Chapter Body with Preserved Colors & Highlights */}
+              {/* Section Separator */}
+              {idx < allChapters.length - 1 && (
                 <div
-                  className={`book-render-content ${fontSizeClass} text-justify`}
-                  style={{
-                    lineHeight: lineSpacingStyle,
-                  }}
-                  dangerouslySetInnerHTML={{ __html: chunk.translatedHtml || '' }}
-                />
-
-                {/* Section Separator */}
-                {idx < project.chunks.length - 1 && (
-                  <div
-                    className="text-center my-8 text-sm opacity-60"
-                    style={{ color: theme.accentColor }}
-                  >
-                    {theme.dividerSymbol}
-                  </div>
-                )}
-              </div>
-            ))}
+                  className="text-center my-10 text-sm opacity-60"
+                  style={{ color: theme.accentColor }}
+                >
+                  {theme.dividerSymbol}
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>
